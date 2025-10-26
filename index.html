@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Utility Pole 2D Modeler</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        #container {
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+        }
+        #form-container, #canvas-container {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        #form-container {
+            width: 300px;
+        }
+        #canvas-container {
+            min-width: 400px;
+        }
+        label, input, button {
+            display: block;
+            margin: 10px 0;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        canvas {
+            border: 1px solid #000;
+            background: #fff;
+            width: 100%;
+            height: auto;
+        }
+        #saveDialog {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        #saveDialog input {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Utility Pole 2D Modeler</h1>
+    <div id="container">
+        <div id="form-container">
+            <form id="pole-form">
+                <label for="poleHeight">Pole Height [ft'-in"]:</label>
+                <input type="number" id="poleHeight" min="0" step="0.1" required>
+                
+                <label for="settingDepth">Setting Depth [ft'-in"]:</label>
+                <input type="number" id="settingDepth" min="0" step="0.1" required>
+                
+                <label for="attachments">Attachment Heights [ft'-in"], comma-separated, from ground level:</label>
+                <input type="text" id="attachments" placeholder="e.g., 10'-8&quot;, 15'-6&quot;, 25'-0&quot;, 25'-5&quot;" required>
+                
+                <label>
+                    <input type="checkbox" id="toggleHeightMode"> Show Heights from Top of Pole
+                </label>
+                
+                <button type="submit">Generate Model</button>
+                <button type="button" id="saveTemplate">Save as Template</button>
+                <input type="file" id="importTemplate" accept=".json">
+            </form>
+        </div>
+        <div id="canvas-container">
+            <canvas id="poleCanvas" width="400" height="600"></canvas>
+        </div>
+    </div>
+    <div id="saveDialog">
+        <label for="templateName">Template Name:</label>
+        <input type="text" id="templateName" required>
+        <button type="button" id="confirmSave">Save</button>
+        <button type="button" id="cancelSave">Cancel</button>
+    </div>
+
+    <script>
+        const form = document.getElementById('pole-form');
+        const canvas = document.getElementById('poleCanvas');
+        const ctx = canvas.getContext('2d');
+        const saveDialog = document.getElementById('saveDialog');
+        const templateNameInput = document.getElementById('templateName');
+        const confirmSaveBtn = document.getElementById('confirmSave');
+        const cancelSaveBtn = document.getElementById('cancelSave');
+        const saveTemplateBtn = document.getElementById('saveTemplate');
+        const importTemplateInput = document.getElementById('importTemplate');
+        const toggleHeightMode = document.getElementById('toggleHeightMode');
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            drawPole();
+        });
+
+        saveTemplateBtn.addEventListener('click', () => {
+            saveDialog.style.display = 'block';
+        });
+
+        confirmSaveBtn.addEventListener('click', () => {
+            const templateName = templateNameInput.value.trim();
+            if (templateName) {
+                saveTemplate(templateName);
+                saveDialog.style.display = 'none';
+                templateNameInput.value = '';
+            }
+        });
+
+        cancelSaveBtn.addEventListener('click', () => {
+            saveDialog.style.display = 'none';
+            templateNameInput.value = '';
+        });
+
+        importTemplateInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const template = JSON.parse(event.target.result);
+                        document.getElementById('poleHeight').value = template.poleHeight;
+                        document.getElementById('settingDepth').value = template.settingDepth;
+                        document.getElementById('attachments').value = template.attachments.join(', ');
+                        drawPole();
+                    } catch (error) {
+                        alert('Invalid template file.');
+                    }
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        function saveTemplate(name) {
+            const template = {
+                poleHeight: document.getElementById('poleHeight').value,
+                settingDepth: document.getElementById('settingDepth').value,
+                attachments: document.getElementById('attachments').value.split(',').map(h => h.trim())
+            };
+            const dataStr = JSON.stringify(template, null, 2);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${name}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function drawPole() {
+            const poleHeight = parseFloat(document.getElementById('poleHeight').value);
+            const settingDepth = parseFloat(document.getElementById('settingDepth').value);
+            const attachmentInput = document.getElementById('attachments').value;
+
+            const attachmentHeights = attachmentInput.split(',')
+                .map(height => height.trim())
+                .map(height => {
+                    let feet = 0, inches = 0;
+                    const matchQuote = height.match(/(\d+)\'?[-']?(\d+)?"/);
+                    const matchDash = height.match(/(\d+)\'?[-](\d+)"/);
+                    if (matchQuote) {
+                        feet = parseInt(matchQuote[1]) || 0;
+                        inches = parseInt(matchQuote[2]) || 0;
+                    } else if (matchDash) {
+                        feet = parseInt(matchDash[1]) || 0;
+                        inches = parseInt(matchDash[2]) || 0;
+                    } else {
+                        const num = parseFloat(height);
+                        if (!isNaN(num)) return num;
+                        return null;
+                    }
+                    return feet + inches / 12;
+                })
+                .filter(height => height !== null && !isNaN(height) && height >= 0 && height <= (poleHeight - settingDepth))
+                .sort((a, b) => b - a);
+
+            if (isNaN(poleHeight) || poleHeight <= 0) {
+                alert('Please enter a valid pole height greater than 0.');
+                return;
+            }
+            if (isNaN(settingDepth) || settingDepth < 0 || settingDepth >= poleHeight) {
+                alert('Please enter a valid setting depth between 0 and less than pole height.');
+                return;
+            }
+            if (attachmentHeights.length === 0) {
+                alert('Please enter valid attachment heights.');
+                return;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+            const margin = 50;
+            const totalHeight = poleHeight;
+            const scale = (canvasHeight - 2 * margin) / totalHeight;
+            const poleWidth = 20;
+            const poleX = canvasWidth / 2;
+
+            const groundY = canvasHeight - margin - (settingDepth * scale);
+
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(0, groundY, canvasWidth, settingDepth * scale);
+
+            ctx.fillStyle = '#4A3728';
+            ctx.fillRect(poleX - poleWidth / 2, groundY - ((poleHeight - settingDepth) * scale), poleWidth, poleHeight * scale);
+
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, groundY);
+            ctx.lineTo(canvasWidth, groundY);
+            ctx.stroke();
+
+            ctx.fillStyle = '#FF0000';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+
+            attachmentHeights.forEach((height, index) => {
+                const y = groundY - (height * scale);
+                ctx.beginPath();
+                ctx.moveTo(poleX - poleWidth, y);
+                ctx.lineTo(poleX + poleWidth, y);
+                ctx.strokeStyle = '#FF0000';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                const feet = Math.floor(height);
+                const inches = Math.round((height - feet) * 12);
+                const displayHeightAGL = `${feet}'-${inches}"`;
+                const heightAboveGround = poleHeight - settingDepth;
+                const distanceFromTop = heightAboveGround - height;
+                const topFeet = Math.floor(distanceFromTop);
+                const topInches = Math.round((distanceFromTop - topFeet) * 12);
+                const displayHeightTop = `${topFeet}'-${topInches}"`;
+                const displayHeight = toggleHeightMode.checked ? displayHeightTop : displayHeightAGL;
+                ctx.fillText(`Attachment ${index + 1}: ${displayHeight}`, poleX + poleWidth + 10, y + 5);
+            });
+
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 3]);
+            ctx.fillStyle = '#000';
+            ctx.textAlign = 'left';
+
+            const offset = 30;
+            const textOffset = 30;
+
+            for (let i = 0; i < attachmentHeights.length - 1; i++) {
+                const y1 = groundY - (attachmentHeights[i] * scale);
+                const y2 = groundY - (attachmentHeights[i + 1] * scale);
+                const distance = attachmentHeights[i] - attachmentHeights[i + 1];
+                const midY = (y1 + y2) / 2;
+
+                ctx.beginPath();
+                ctx.moveTo(poleX - poleWidth, y1);
+                ctx.lineTo(poleX - poleWidth - offset, y1);
+                ctx.moveTo(poleX - poleWidth - offset, y2);
+                ctx.lineTo(poleX - poleWidth, y2);
+                ctx.stroke();
+
+                const feet = Math.floor(distance);
+                const inches = Math.round((distance - feet) * 12);
+                const measurement = `${feet}'-${inches}"`;
+                ctx.fillText(measurement, poleX - poleWidth - offset - textOffset, midY + 5);
+            }
+
+            ctx.setLineDash([]);
+
+            const poleFeet = Math.floor(poleHeight);
+            const poleInches = Math.round((poleHeight - poleFeet) * 12);
+            const poleDisplay = `${poleFeet}'-${poleInches}"`;
+            const depthFeet = Math.floor(settingDepth);
+            const depthInches = Math.round((settingDepth - depthFeet) * 12);
+            const depthDisplay = `${depthFeet}'-${depthInches}"`;
+            ctx.fillStyle = '#000';
+            ctx.textAlign = 'right';
+            ctx.fillText(`Pole Height: ${poleDisplay}`, poleX - poleWidth - 10, groundY - ((poleHeight - settingDepth) * scale) + 5);
+            ctx.fillText(`Setting Depth: ${depthDisplay}`, poleX - poleWidth - 10, groundY - 15);
+        }
+    </script>
+</body>
+</html>
